@@ -1,9 +1,9 @@
 import os
 import re
 import time
+import requests
 import google.generativeai as genai
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright
 
 load_dotenv()
 
@@ -14,215 +14,208 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-def get_solution_from_gemini(title, description, lang="python3"):
-    prompt = f"""
-You are an expert competitive programmer.
-Solve this LeetCode problem and return ONLY the solution code, no explanation.
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "Referer": "https://leetcode.com/",
+    "Origin": "https://leetcode.com",
+}
 
-Problem Title: {title}
+def login():
+    print("🔐 Logging in via API...")
+    session = requests.Session()
+    session.headers.update(HEADERS)
 
-Problem Description:
+    # Get CSRF token
+    resp = session.get("https://leetcode.com/", timeout=15)
+    csrf = session.cookies.get("csrftoken", "")
+    if not csrf:
+        for c in session.cookies:
+            if "csrf" in c.name.lower():
+                csrf = c.value
+                break
+
+    print(f"🔑 CSRF token: {csrf[:10]}...")
+
+    session.headers.update({
+        "X-CSRFToken": csrf,
+        "Referer": "https://leetcode.com/accounts/login/",
+    })
+
+    login_data = {
+        "login": LEETCODE_USERNAME,
+        "password": LEETCODE_PASSWORD,
+    }
+
+    resp = session.post(
+        "https://leetcode.com/accounts/login/",
+        data=login_data,
+        timeout=15,
+        allow_redirects=True
+    )
+
+    print(f"📄 Login status: {resp.status_code}")
+    print(f"📄 Redirect URL: {resp.url}")
+
+    # Check login success
+    if "leetcode.com" in resp.url and resp.status_code == 200:
+        user_check = session.get("https://leetcode.com/api/problems/all/", timeout=10)
+        if user_check.status_code == 200:
+            print("✅ Login successful!")
+            return session
+    
+    # Try GraphQL login check
+    check = session.post(
+        "https://leetcode.com/graphql",
+        json={"query": "{ userStatus { username isSignedIn } }"},
+        timeout=10
+    )
+    if check.status_code == 200:
+        data = check.json()
+        user_data = data.get("data", {}).get("userStatus", {})
+        if user_data.get("isSignedIn"):
+            print(f"✅ Logged in as: {user_data.get('username')}")
+            return session
+        else:
+            print(f"⚠️ Not signed in. Response: {data}")
+
+    print("✅ Proceeding with session (cookies set)")
+    return session
+
+def get_daily_challenge(session):
+    print("📅 Fetching daily challenge...")
+    query = """
+    {
+        activeDailyCodingChallengeQuestion {
+            date
+            link
+            question {
+                title
+                titleSlug
+                content
+                difficulty
+                questionId
+                exampleTestcases
+                metaData
+            }
+        }
+    }
+    """
+    resp = session.post(
+        "https://leetcode.com/graphql",
+        json={"query": query},
+        timeout=15
+    )
+    data = resp.json()
+    daily = data["data"]["activeDailyCodingChallengeQuestion"]
+    return daily
+
+def get_solution_from_gemini(title, description):
+    print("🤖 Getting solution from Gemini...")
+    prompt = f"""You are an expert competitive programmer.
+Solve this LeetCode problem. Return ONLY the Python3 solution code.
+No explanation, no markdown, no backticks — just the raw code.
+
+Problem: {title}
+
+Description:
 {description}
-
-Language: {lang}
-
-Return only the function/class code that LeetCode expects. No markdown, no backticks.
 """
     response = model.generate_content(prompt)
-    return response.text.strip()
+    code = response.text.strip()
+    # Clean up if model added backticks anyway
+    code = re.sub(r'^```python\n?', '', code)
+    code = re.sub(r'^```\n?', '', code)
+    code = re.sub(r'\n?```$', '', code)
+    return code.strip()
 
-def login_leetcode(page):
-    print("🔐 Navigating to LeetCode login...")
-    page.goto("https://leetcode.com/accounts/login/", wait_until="domcontentloaded")
-    page.wait_for_load_state("networkidle", timeout=15000)
+def submit_solution(session, slug, question_id, solution, lang="python3"):
+    print(f"🚀 Submitting solution for: {slug}")
 
-    print(f"📄 Current URL: {page.url}")
-    print(f"📄 Page title: {page.title()}")
+    # Get CSRF token from cookies
+    csrf = session.cookies.get("csrftoken", "")
 
-    # Try multiple selectors for username
-    username_selectors = [
-        "input#id_login",
-        "input[name='login']",
-        "input[autocomplete='username']",
-        "input[name='username']",
-        "input[placeholder*='username' i]",
-        "input[placeholder*='email' i]",
-        "input[type='text']",
-    ]
+    session.headers.update({
+        "X-CSRFToken": csrf,
+        "Referer": f"https://leetcode.com/problems/{slug}/",
+    })
 
-    username_input = None
-    for selector in username_selectors:
-        try:
-            el = page.locator(selector).first
-            if el.count() > 0 and el.is_visible():
-                username_input = el
-                print(f"✅ Found username field: {selector}")
-                break
-        except:
-            continue
+    payload = {
+        "lang": lang,
+        "question_id": str(question_id),
+        "typed_code": solution,
+    }
 
-    if username_input is None:
-        # Save screenshot for debugging
-        page.screenshot(path="login-debug.png", full_page=True)
-        print("❌ Could not find username field. Page content:")
-        print(page.content()[:2000])
-        raise RuntimeError("Login form not found")
+    resp = session.post(
+        f"https://leetcode.com/problems/{slug}/submit/",
+        json=payload,
+        timeout=15
+    )
 
-    # Fill credentials
-    username_input.click()
-    username_input.fill(LEETCODE_USERNAME)
+    print(f"📤 Submit status: {resp.status_code}")
 
-    password_selectors = [
-        "input#id_password",
-        "input[name='password']",
-        "input[type='password']",
-    ]
-    for selector in password_selectors:
-        try:
-            el = page.locator(selector).first
-            if el.count() > 0 and el.is_visible():
-                el.fill(LEETCODE_PASSWORD)
-                print(f"✅ Found password field: {selector}")
-                break
-        except:
-            continue
+    if resp.status_code == 200:
+        result = resp.json()
+        submission_id = result.get("submission_id")
+        print(f"✅ Submitted! Submission ID: {submission_id}")
 
-    # Submit
-    submit_selectors = [
-        "button[type='submit']",
-        "button:has-text('Sign in')",
-        "button:has-text('Log in')",
-        "input[type='submit']",
-    ]
-    for selector in submit_selectors:
-        try:
-            el = page.locator(selector).first
-            if el.count() > 0 and el.is_visible():
-                el.click()
-                print(f"✅ Clicked submit: {selector}")
-                break
-        except:
-            continue
+        # Poll for result
+        print("⏳ Waiting for result...")
+        for i in range(10):
+            time.sleep(3)
+            check = session.get(
+                f"https://leetcode.com/submissions/detail/{submission_id}/check/",
+                timeout=10
+            )
+            if check.status_code == 200:
+                check_data = check.json()
+                state = check_data.get("state", "")
+                print(f"   State: {state}")
+                if state == "SUCCESS":
+                    status = check_data.get("status_msg", "Unknown")
+                    print(f"🎉 Result: {status}")
+                    if status == "Accepted":
+                        print("🔥 Streak maintained!")
+                    return check_data
+                elif state in ["FAILURE", "RUNTIME_ERROR", "COMPILE_ERROR"]:
+                    print(f"❌ Error: {check_data.get('status_msg')}")
+                    return check_data
+    else:
+        print(f"❌ Submit failed: {resp.text[:500]}")
 
-    # Wait for redirect after login
-    time.sleep(5)
-    page.wait_for_load_state("networkidle", timeout=15000)
-    print(f"✅ Logged in! Current URL: {page.url}")
+    return None
 
 def run_agent():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=[
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-blink-features=AutomationControlled",
-        ])
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800}
-        )
-        page = context.new_page()
+    # Login
+    session = login()
 
-        # Login
-        login_leetcode(page)
+    # Get daily challenge
+    daily = get_daily_challenge(session)
+    question = daily["question"]
+    title = question["title"]
+    slug = question["titleSlug"]
+    question_id = question["questionId"]
+    difficulty = question["difficulty"]
+    content = re.sub('<[^<]+?>', '', question["content"])
+    link = "https://leetcode.com" + daily["link"]
 
-        # Step 2: Fetch daily challenge via GraphQL
-        print("📅 Fetching Daily Challenge...")
-        page.goto("https://leetcode.com/problemset/", wait_until="domcontentloaded")
-        time.sleep(3)
+    print(f"\n📝 Today's Problem: {title} [{difficulty}]")
+    print(f"🔗 {link}\n")
 
-        daily_data = page.evaluate("""
-            async () => {
-                const res = await fetch('/graphql', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        query: `{
-                            activeDailyCodingChallengeQuestion {
-                                date
-                                link
-                                question {
-                                    title
-                                    titleSlug
-                                    content
-                                    difficulty
-                                }
-                            }
-                        }`
-                    })
-                });
-                const data = await res.json();
-                return data.data.activeDailyCodingChallengeQuestion;
-            }
-        """)
+    # Generate solution
+    solution = get_solution_from_gemini(title, content)
+    print("--- Solution ---")
+    print(solution[:400])
+    print("----------------\n")
 
-        title = daily_data['question']['title']
-        slug = daily_data['question']['titleSlug']
-        content = daily_data['question']['content']
-        difficulty = daily_data['question']['difficulty']
-        link = "https://leetcode.com" + daily_data['link']
+    # Submit
+    result = submit_solution(session, slug, question_id, solution)
 
-        print(f"📝 Today's Problem: {title} [{difficulty}]")
-
-        # Step 3: Get solution from Gemini
-        print("🤖 Getting solution from Gemini...")
-        clean_content = re.sub('<[^<]+?>', '', content)
-        solution = get_solution_from_gemini(title, clean_content)
-        print("✅ Solution generated!")
-        print("--- Solution Preview ---")
-        print(solution[:300])
-        print("------------------------")
-
-        # Step 4: Open problem page
-        print(f"🌐 Opening: {link}")
-        page.goto(link, wait_until="domcontentloaded")
-        time.sleep(5)
-
-        # Step 5: Set language to Python3
-        try:
-            page.wait_for_selector("[data-cy='lang-select'], button:has-text('Python')", timeout=8000)
-            lang_btn = page.locator("button:has-text('Python3')").first
-            if not lang_btn.is_visible():
-                lang_selector = page.locator("[data-cy='lang-select']").first
-                if lang_selector.is_visible():
-                    lang_selector.click()
-                    time.sleep(1)
-                    page.locator("text=Python3").first.click()
-                    time.sleep(1)
-            print("✅ Language: Python3")
-        except Exception as e:
-            print(f"⚠️ Language selector: {e}")
-
-        # Step 6: Paste solution
-        print("📋 Pasting solution...")
-        try:
-            editor = page.locator(".view-lines").first
-            editor.click()
-            time.sleep(1)
-            page.keyboard.press("Control+a")
-            time.sleep(0.5)
-            page.keyboard.type(solution)
-            time.sleep(2)
-            print("✅ Solution pasted!")
-        except Exception as e:
-            print(f"⚠️ Editor: {e}")
-
-        # Step 7: Submit
-        print("🚀 Submitting...")
-        try:
-            submit_btn = page.locator("button:has-text('Submit')").last
-            submit_btn.click()
-            time.sleep(10)
-
-            result = page.locator(".text-green-s, [data-e2e-locator='submission-result']").first
-            if result.is_visible():
-                print(f"🎉 Result: {result.inner_text()}")
-            else:
-                print("⏳ Submission sent — check LeetCode for result")
-        except Exception as e:
-            print(f"⚠️ Submit: {e}")
-
-        browser.close()
-        print("✅ Done! Streak maintained 🔥")
+    if result:
+        print(f"\n✅ Agent finished!")
+    else:
+        print("\n⚠️ Could not confirm submission result — check LeetCode manually")
 
 if __name__ == "__main__":
     run_agent()
