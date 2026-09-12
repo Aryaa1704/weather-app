@@ -1,0 +1,32 @@
+name: LeetCode Daily Agent
+
+on:
+  schedule:
+    - cron: '30 1 * * *'  # Roz 7:00 AM IST (1:30 AM UTC)
+  workflow_dispatch:       # Manual trigger bhi kar sakte ho
+
+jobs:
+  solve-daily:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Run LeetCode Agent
+        env:
+          LEETCODE_USERNAME: ${{ secrets.LEETCODE_USERNAME }}
+          LEETCODE_PASSWORD: ${{ secrets.LEETCODE_PASSWORD }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python agent.py
