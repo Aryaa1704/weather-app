@@ -12,9 +12,7 @@ LEETCODE_PASSWORD = os.getenv("LEETCODE_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 LEETCODE_SESSION = os.getenv("LEETCODE_SESSION")  # optional cookie
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.0-flash")
-
+genai.configure(api_key=GEMINI_API_KEY)model = genai.GenerativeModel("gemini-3.6-flash")
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
     "Content-Type": "application/json",
