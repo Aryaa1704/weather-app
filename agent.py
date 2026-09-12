@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -30,32 +31,105 @@ Return only the function/class code that LeetCode expects. No markdown, no backt
     response = model.generate_content(prompt)
     return response.text.strip()
 
+def login_leetcode(page):
+    print("🔐 Navigating to LeetCode login...")
+    page.goto("https://leetcode.com/accounts/login/", wait_until="domcontentloaded")
+    page.wait_for_load_state("networkidle", timeout=15000)
+
+    print(f"📄 Current URL: {page.url}")
+    print(f"📄 Page title: {page.title()}")
+
+    # Try multiple selectors for username
+    username_selectors = [
+        "input#id_login",
+        "input[name='login']",
+        "input[autocomplete='username']",
+        "input[name='username']",
+        "input[placeholder*='username' i]",
+        "input[placeholder*='email' i]",
+        "input[type='text']",
+    ]
+
+    username_input = None
+    for selector in username_selectors:
+        try:
+            el = page.locator(selector).first
+            if el.count() > 0 and el.is_visible():
+                username_input = el
+                print(f"✅ Found username field: {selector}")
+                break
+        except:
+            continue
+
+    if username_input is None:
+        # Save screenshot for debugging
+        page.screenshot(path="login-debug.png", full_page=True)
+        print("❌ Could not find username field. Page content:")
+        print(page.content()[:2000])
+        raise RuntimeError("Login form not found")
+
+    # Fill credentials
+    username_input.click()
+    username_input.fill(LEETCODE_USERNAME)
+
+    password_selectors = [
+        "input#id_password",
+        "input[name='password']",
+        "input[type='password']",
+    ]
+    for selector in password_selectors:
+        try:
+            el = page.locator(selector).first
+            if el.count() > 0 and el.is_visible():
+                el.fill(LEETCODE_PASSWORD)
+                print(f"✅ Found password field: {selector}")
+                break
+        except:
+            continue
+
+    # Submit
+    submit_selectors = [
+        "button[type='submit']",
+        "button:has-text('Sign in')",
+        "button:has-text('Log in')",
+        "input[type='submit']",
+    ]
+    for selector in submit_selectors:
+        try:
+            el = page.locator(selector).first
+            if el.count() > 0 and el.is_visible():
+                el.click()
+                print(f"✅ Clicked submit: {selector}")
+                break
+        except:
+            continue
+
+    # Wait for redirect after login
+    time.sleep(5)
+    page.wait_for_load_state("networkidle", timeout=15000)
+    print(f"✅ Logged in! Current URL: {page.url}")
+
 def run_agent():
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context()
+        browser = p.chromium.launch(headless=True, args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+        ])
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 800}
+        )
         page = context.new_page()
 
-        # Step 1: Login
-        print("🔐 Logging in to LeetCode...")
-        page.goto("https://leetcode.com/accounts/login/")
-        login_input = page.locator("#id_login, input[name='login'], input[autocomplete='username']").first
-        password_input = page.locator("#id_password, input[name='password'], input[type='password']").first
-        login_input.wait_for(state="visible", timeout=20000)
-        password_input.wait_for(state="visible", timeout=20000)
-        login_input.fill(LEETCODE_USERNAME)
-        password_input.fill(LEETCODE_PASSWORD)
-        page.click("button[type='submit']")
-        page.wait_for_url("https://leetcode.com/", timeout=20000)
-        print("✅ Logged in!")
+        # Login
+        login_leetcode(page)
+
+        # Step 2: Fetch daily challenge via GraphQL
+        print("📅 Fetching Daily Challenge...")
+        page.goto("https://leetcode.com/problemset/", wait_until="domcontentloaded")
         time.sleep(3)
 
-        # Step 2: Go to Daily Challenge
-        print("📅 Opening Daily Challenge...")
-        page.goto("https://leetcode.com/problemset/")
-        time.sleep(3)
-
-        # Fetch daily challenge via GraphQL
         daily_data = page.evaluate("""
             async () => {
                 const res = await fetch('/graphql', {
@@ -91,8 +165,6 @@ def run_agent():
 
         # Step 3: Get solution from Gemini
         print("🤖 Getting solution from Gemini...")
-        # Strip HTML tags from content
-        import re
         clean_content = re.sub('<[^<]+?>', '', content)
         solution = get_solution_from_gemini(title, clean_content)
         print("✅ Solution generated!")
@@ -101,27 +173,28 @@ def run_agent():
         print("------------------------")
 
         # Step 4: Open problem page
-        print(f"🌐 Opening problem: {link}")
-        page.goto(link)
+        print(f"🌐 Opening: {link}")
+        page.goto(link, wait_until="domcontentloaded")
         time.sleep(5)
 
         # Step 5: Set language to Python3
         try:
+            page.wait_for_selector("[data-cy='lang-select'], button:has-text('Python')", timeout=8000)
             lang_btn = page.locator("button:has-text('Python3')").first
             if not lang_btn.is_visible():
-                # Try clicking language selector
-                page.locator("[data-cy='lang-select']").click()
-                time.sleep(1)
-                page.locator("text=Python3").click()
-                time.sleep(1)
-            print("✅ Language set to Python3")
+                lang_selector = page.locator("[data-cy='lang-select']").first
+                if lang_selector.is_visible():
+                    lang_selector.click()
+                    time.sleep(1)
+                    page.locator("text=Python3").first.click()
+                    time.sleep(1)
+            print("✅ Language: Python3")
         except Exception as e:
-            print(f"⚠️ Language selector issue: {e}")
+            print(f"⚠️ Language selector: {e}")
 
-        # Step 6: Paste solution in editor
+        # Step 6: Paste solution
         print("📋 Pasting solution...")
         try:
-            # Click on editor and select all, then type
             editor = page.locator(".view-lines").first
             editor.click()
             time.sleep(1)
@@ -131,27 +204,25 @@ def run_agent():
             time.sleep(2)
             print("✅ Solution pasted!")
         except Exception as e:
-            print(f"⚠️ Editor paste issue: {e}")
+            print(f"⚠️ Editor: {e}")
 
         # Step 7: Submit
-        print("🚀 Submitting solution...")
+        print("🚀 Submitting...")
         try:
             submit_btn = page.locator("button:has-text('Submit')").last
             submit_btn.click()
-            time.sleep(8)
+            time.sleep(10)
 
-            # Check result
             result = page.locator(".text-green-s, [data-e2e-locator='submission-result']").first
             if result.is_visible():
-                result_text = result.inner_text()
-                print(f"🎉 Result: {result_text}")
+                print(f"🎉 Result: {result.inner_text()}")
             else:
                 print("⏳ Submission sent — check LeetCode for result")
         except Exception as e:
-            print(f"⚠️ Submit issue: {e}")
+            print(f"⚠️ Submit: {e}")
 
         browser.close()
-        print("✅ Agent finished! Streak maintained 🔥")
+        print("✅ Done! Streak maintained 🔥")
 
 if __name__ == "__main__":
     run_agent()
