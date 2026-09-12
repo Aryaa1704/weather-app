@@ -26,4 +26,5 @@ jobs:
           LEETCODE_USERNAME: ${{ secrets.LEETCODE_USERNAME }}
           LEETCODE_PASSWORD: ${{ secrets.LEETCODE_PASSWORD }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          LEETCODE_SESSION: ${{ secrets.LEETCODE_SESSION }}
         run: python agent.py
