@@ -39,9 +39,12 @@ def run_agent():
         # Step 1: Login
         print("🔐 Logging in to LeetCode...")
         page.goto("https://leetcode.com/accounts/login/")
-        page.wait_for_selector("#id_login", timeout=15000)
-        page.fill("#id_login", LEETCODE_USERNAME)
-        page.fill("#id_password", LEETCODE_PASSWORD)
+        login_input = page.locator("#id_login, input[name='login'], input[autocomplete='username']").first
+        password_input = page.locator("#id_password, input[name='password'], input[type='password']").first
+        login_input.wait_for(state="visible", timeout=20000)
+        password_input.wait_for(state="visible", timeout=20000)
+        login_input.fill(LEETCODE_USERNAME)
+        password_input.fill(LEETCODE_PASSWORD)
         page.click("button[type='submit']")
         page.wait_for_url("https://leetcode.com/", timeout=20000)
         print("✅ Logged in!")
