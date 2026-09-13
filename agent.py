@@ -31,7 +31,6 @@ def create_session():
         resp = session.get("https://leetcode.com/", timeout=15)
         csrf = session.cookies.get("csrftoken", "")
         session.headers.update({"X-CSRFToken": csrf})
-        print("✅ Session loaded!")
         return session
     raise SystemExit("❌ LEETCODE_SESSION not found!")
 
@@ -42,11 +41,15 @@ def check_login(session):
         timeout=10
     )
     data = resp.json().get("data", {}).get("userStatus", {})
-    print(f"👤 User: {data.get('username')} | Signed in: {data.get('isSignedIn')}")
-    return data.get("isSignedIn", False)
+    username = data.get('username', '')
+    signed_in = data.get('isSignedIn', False)
+    print(f"👤 User: {username} | Signed in: {signed_in}")
+    if not signed_in:
+        # This will trigger the email alert via GitHub Actions failure
+        raise SystemExit("❌ Cookie expired! Email alert will be sent.")
+    return True
 
 def get_daily_challenge(session):
-    print("📅 Fetching Daily Challenge...")
     query = """
     {
         activeDailyCodingChallengeQuestion {
@@ -64,16 +67,68 @@ def get_daily_challenge(session):
     }
     """
     resp = session.post("https://leetcode.com/graphql", json={"query": query}, timeout=15)
-    data = resp.json()
-    return data["data"]["activeDailyCodingChallengeQuestion"]
+    return resp.json()["data"]["activeDailyCodingChallengeQuestion"]
+
+def get_easy_problems(session, count=3):
+    """Fetch unsolved easy problems"""
+    query = """
+    query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
+        problemsetQuestionList: questionList(
+            categorySlug: $categorySlug
+            limit: $limit
+            skip: $skip
+            filters: $filters
+        ) {
+            questions: data {
+                questionId
+                title
+                titleSlug
+                difficulty
+                status
+                topicTags { name }
+            }
+        }
+    }
+    """
+    variables = {
+        "categorySlug": "",
+        "limit": 100,
+        "skip": 0,
+        "filters": {"difficulty": "EASY"}
+    }
+    resp = session.post(
+        "https://leetcode.com/graphql",
+        json={"query": query, "variables": variables},
+        timeout=15
+    )
+    questions = resp.json()["data"]["problemsetQuestionList"]["questions"]
+    # Return first N unsolved
+    unsolved = [q for q in questions if q["status"] != "ac"]
+    return unsolved[:count]
+
+def get_problem_content(session, slug):
+    query = """
+    query questionContent($titleSlug: String!) {
+        question(titleSlug: $titleSlug) {
+            questionId
+            title
+            content
+            topicTags { name }
+        }
+    }
+    """
+    resp = session.post(
+        "https://leetcode.com/graphql",
+        json={"query": query, "variables": {"titleSlug": slug}},
+        timeout=15
+    )
+    return resp.json()["data"]["question"]
 
 def get_community_solutions(session, slug):
-    """Fetch top community solutions for the problem"""
-    print("🔍 Fetching community solutions...")
     query = """
-    query communitySolutions($questionSlug: String!, $skip: Int!, $first: Int!, $query: String, $orderBy: TopicSortingOption, $languageTags: [String!]) {
+    query communitySolutions($questionSlug: String!, $skip: Int!, $first: Int!, $orderBy: TopicSortingOption, $languageTags: [String!]) {
         questionSolutions(
-            filters: {questionSlug: $questionSlug, skip: $skip, first: $first, query: $query, orderBy: $orderBy, languageTags: $languageTags}
+            filters: {questionSlug: $questionSlug, skip: $skip, first: $first, orderBy: $orderBy, languageTags: $languageTags}
         ) {
             solutions {
                 id
@@ -97,41 +152,32 @@ def get_community_solutions(session, slug):
         timeout=15
     )
     if resp.status_code == 200:
-        data = resp.json()
-        solutions = data.get("data", {}).get("questionSolutions", {}).get("solutions", [])
+        solutions = resp.json().get("data", {}).get("questionSolutions", {}).get("solutions", [])
         for sol in solutions:
             if sol.get("langSlug") == "python3" and sol.get("content"):
-                # Extract code from content
-                content = sol["content"]
-                code_match = re.search(r'```python3?\n(.*?)```', content, re.DOTALL)
+                code_match = re.search(r'```python3?\n(.*?)```', sol["content"], re.DOTALL)
                 if code_match:
-                    print(f"✅ Found community solution: {sol['title']}")
                     return code_match.group(1).strip()
     return None
 
-def get_solution_from_gemini(title, description, tags, attempt=1):
-    print(f"🤖 Gemini solving (attempt {attempt})...")
-    
-    tags_str = ", ".join(tags) if tags else "unknown"
-    
-    prompt = f"""You are a world-class competitive programmer. 
-Solve this LeetCode problem with a CORRECT and COMPLETE Python3 solution.
+def get_solution_from_gemini(title, content, tags, attempt=1):
+    tags_str = ", ".join(tags) if tags else ""
+    prompt = f"""You are a world-class competitive programmer.
+Solve this LeetCode problem with a CORRECT Python3 solution.
 
 Problem: {title}
-Topic Tags: {tags_str}
+Tags: {tags_str}
 
 Description:
-{description}
+{content}
 
-CRITICAL RULES:
-1. Return ONLY raw Python3 code — no markdown, no backticks, no explanation
-2. Include ALL necessary imports at the top
-3. The solution must handle ALL edge cases
-4. Use the most reliable algorithm for this problem type
-5. Make sure variable names and logic are correct
-
-{"HINT: Previous attempt had a runtime error. Try a completely different approach." if attempt > 1 else ""}
-{"HINT: Use a simpler, more straightforward approach this time." if attempt > 2 else ""}
+RULES:
+- Return ONLY raw Python3 code
+- No markdown, no backticks, no explanation
+- Include all necessary imports
+- Handle all edge cases
+{"- Previous attempt failed. Try a completely different approach." if attempt > 1 else ""}
+{"- Use the simplest brute force approach — correctness over efficiency." if attempt > 2 else ""}
 """
     response = model.generate_content(prompt)
     code = response.text.strip()
@@ -146,14 +192,9 @@ def submit_and_check(session, slug, question_id, solution):
         "X-CSRFToken": csrf,
         "Referer": f"https://leetcode.com/problems/{slug}/",
     })
-    payload = {
-        "lang": "python3",
-        "question_id": str(question_id),
-        "typed_code": solution,
-    }
     resp = session.post(
         f"https://leetcode.com/problems/{slug}/submit/",
-        json=payload,
+        json={"lang": "python3", "question_id": str(question_id), "typed_code": solution},
         timeout=15
     )
     if resp.status_code != 200:
@@ -161,7 +202,7 @@ def submit_and_check(session, slug, question_id, solution):
         return None
 
     submission_id = resp.json().get("submission_id")
-    print(f"✅ Submitted! ID: {submission_id} — waiting for result...")
+    print(f"📤 Submitted! ID: {submission_id}")
 
     for i in range(20):
         time.sleep(3)
@@ -177,61 +218,95 @@ def submit_and_check(session, slug, question_id, solution):
                 print(f"🎯 Result: {status}")
                 return status
             elif state in ["FAILURE", "RUNTIME_ERROR", "COMPILE_ERROR", "WRONG_ANSWER"]:
-                status = check_data.get("status_msg", state)
-                print(f"❌ {status}")
-                return status
+                print(f"❌ {check_data.get('status_msg', state)}")
+                return check_data.get("status_msg", state)
     return None
 
-def run_agent():
-    session = create_session()
-    if not check_login(session):
-        print("⚠️ Not logged in! Refresh LEETCODE_SESSION.")
-        raise SystemExit(1)
+def solve_problem(session, title, slug, question_id, content, tags, label=""):
+    print(f"\n{'='*50}")
+    print(f"📝 {label}: {title}")
+    print(f"🔗 https://leetcode.com/problems/{slug}/")
+    print(f"{'='*50}")
 
-    # Get today's daily challenge
-    daily = get_daily_challenge(session)
-    question = daily["question"]
-    title = question["title"]
-    slug = question["titleSlug"]
-    question_id = question["questionId"]
-    difficulty = question["difficulty"]
-    tags = [t["name"] for t in question.get("topicTags", [])]
-    content = re.sub('<[^<]+?>', '', question["content"])
-    link = "https://leetcode.com" + daily["link"]
-
-    print(f"\n📝 Today's Daily: {title} [{difficulty}]")
-    print(f"🔗 {link}")
-    print(f"🏷️ Tags: {', '.join(tags)}\n")
-
-    # Step 1: Try community solution first
-    community_code = get_community_solutions(session, slug)
-    if community_code:
-        print("--- Community Solution ---")
-        print(community_code[:300])
-        print("-------------------------\n")
-        result = submit_and_check(session, slug, question_id, community_code)
+    # Try community solution first
+    community = get_community_solutions(session, slug)
+    if community:
+        print("🔍 Trying community solution...")
+        result = submit_and_check(session, slug, question_id, community)
         if result == "Accepted":
-            print(f"\n🔥 STREAK MAINTAINED! Accepted via community solution!")
-            return
+            print(f"🎉 Accepted via community solution!")
+            return True
+        time.sleep(5)
 
-    # Step 2: Try Gemini up to 4 times
+    # Try Gemini up to 4 times
     for attempt in range(1, 5):
+        print(f"🤖 Gemini attempt {attempt}/4...")
         solution = get_solution_from_gemini(title, content, tags, attempt)
-        print(f"--- Gemini Solution (attempt {attempt}) ---")
-        print(solution[:300])
-        print("------------------------------------------\n")
-
         result = submit_and_check(session, slug, question_id, solution)
-
         if result == "Accepted":
-            print(f"\n🔥 STREAK MAINTAINED! Accepted on attempt {attempt}!")
-            return
-        elif result:
-            print(f"⚠️ Attempt {attempt}/4 failed — retrying...\n")
-            time.sleep(5)
+            print(f"🎉 Accepted on attempt {attempt}!")
+            return True
+        time.sleep(5)
 
-    print("\n⚠️ Could not get Accepted — check LeetCode manually")
-    print("💡 Tip: Refresh LEETCODE_SESSION cookie if this keeps happening")
+    print(f"⚠️ Could not solve: {title}")
+    return False
+
+def run_agent():
+    print("🚀 LeetCode Agent Starting...")
+    session = create_session()
+    check_login(session)  # Will exit with error if cookie expired
+
+    results = []
+
+    # ── PROBLEM 1: Daily Challenge (Streak ke liye) ──
+    print("\n🔥 DAILY CHALLENGE (Streak)")
+    daily = get_daily_challenge(session)
+    q = daily["question"]
+    content = re.sub('<[^<]+?>', '', q["content"])
+    tags = [t["name"] for t in q.get("topicTags", [])]
+    print(f"Problem: {q['title']} [{q['difficulty']}]")
+
+    daily_ok = solve_problem(
+        session, q["title"], q["titleSlug"],
+        q["questionId"], content, tags,
+        label="Daily Challenge"
+    )
+    results.append(("🔥 Daily Challenge", q["title"], q["difficulty"], daily_ok))
+    time.sleep(10)
+
+    # ── PROBLEMS 2-4: Easy Practice ──
+    print("\n📚 EASY PRACTICE PROBLEMS (3)")
+    easy_problems = get_easy_problems(session, count=3)
+
+    for i, eq in enumerate(easy_problems, 1):
+        data = get_problem_content(session, eq["titleSlug"])
+        easy_content = re.sub('<[^<]+?>', '', data["content"])
+        easy_tags = [t["name"] for t in data.get("topicTags", [])]
+
+        ok = solve_problem(
+            session, eq["title"], eq["titleSlug"],
+            eq["questionId"], easy_content, easy_tags,
+            label=f"Easy #{i}"
+        )
+        results.append((f"📗 Easy #{i}", eq["title"], "Easy", ok))
+        time.sleep(10)
+
+    # ── SUMMARY ──
+    print("\n" + "="*50)
+    print("📊 FINAL SUMMARY")
+    print("="*50)
+    total_solved = 0
+    for label, title, diff, success in results:
+        status = "✅ Accepted" if success else "❌ Failed"
+        print(f"{status} | {label}: {title} [{diff}]")
+        if success:
+            total_solved += 1
+
+    print(f"\n🎯 Solved: {total_solved}/4")
+    if results[0][3]:
+        print("🔥 STREAK MAINTAINED!")
+    else:
+        print("⚠️ Daily challenge failed — streak at risk!")
 
 if __name__ == "__main__":
     run_agent()
