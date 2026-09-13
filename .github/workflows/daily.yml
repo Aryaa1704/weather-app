@@ -2,7 +2,7 @@ name: LeetCode Daily Agent
 
 on:
   schedule:
-    - cron: '30 1 * * *'  # 7:00 AM IST
+    - cron: '30 1 * * *'  # 7:00 AM IST roz
   workflow_dispatch:
 
 jobs:
@@ -22,6 +22,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run LeetCode Agent
+        id: run_agent
         env:
           LEETCODE_USERNAME: ${{ secrets.LEETCODE_USERNAME }}
           LEETCODE_PASSWORD: ${{ secrets.LEETCODE_PASSWORD }}
@@ -29,7 +30,7 @@ jobs:
           LEETCODE_SESSION: ${{ secrets.LEETCODE_SESSION }}
         run: python agent.py
 
-      - name: Send alert if cookie expired
+      - name: Send cookie expired alert
         if: failure()
         uses: dawidd6/action-send-mail@v3
         with:
@@ -37,18 +38,18 @@ jobs:
           server_port: 465
           username: ${{ secrets.ALERT_EMAIL }}
           password: ${{ secrets.ALERT_EMAIL_PASSWORD }}
-          subject: "⚠️ LeetCode Agent Failed — Cookie Expired!"
+          subject: "⚠️ LeetCode Agent Failed — Fix Karo!"
           to: ${{ secrets.ALERT_EMAIL }}
           from: LeetCode Agent
           body: |
             Tera LeetCode agent aaj fail hua!
             
-            Reason: LEETCODE_SESSION cookie expire ho gayi hogi.
+            LEETCODE_SESSION cookie expire ho gayi hogi.
             
-            Fix karo:
-            1. leetcode.com pe login karo
-            2. F12 → Application → Cookies → LEETCODE_SESSION copy karo
-            3. GitHub → leetcode-agent → Settings → Secrets → LEETCODE_SESSION update karo
+            Fix:
+            1. leetcode.com login karo
+            2. F12 → Application → Cookies → LEETCODE_SESSION copy karo  
+            3. GitHub → Secrets → LEETCODE_SESSION update karo
             4. Actions → Run workflow manually
             
-            — LeetCode Agent
+            — LeetCode Agent 🤖
