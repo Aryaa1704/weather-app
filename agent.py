@@ -24,7 +24,6 @@ SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
 CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
 CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
 HF_TOKEN = os.getenv("HF_TOKEN")
-TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 
 # =========================================================
 # HTTP
@@ -104,12 +103,6 @@ AI_PROVIDERS = [
         "key": HF_TOKEN,
         "url": "https://router.huggingface.co/v1/chat/completions",
         "model": "openai/gpt-oss-120b:fastest",
-    },
-    {
-        "name": "Together AI",
-        "key": TOGETHER_API_KEY,
-        "url": "https://api.together.xyz/v1/chat/completions",
-        "model": "openai/gpt-oss-120b",
     },
 ]
 
