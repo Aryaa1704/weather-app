@@ -21,12 +21,21 @@ jobs:
       - name: Run LeetCode Agent
         id: run_agent
         env:
-          LEETCODE_USERNAME: ${{ secrets.LEETCODE_USERNAME }}
-          LEETCODE_PASSWORD: ${{ secrets.LEETCODE_PASSWORD }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          LEETCODE_SESSION: ${{ secrets.LEETCODE_SESSION }}
+           LEETCODE_USERNAME: ${{ secrets.LEETCODE_USERNAME }}
+           LEETCODE_PASSWORD: ${{ secrets.LEETCODE_PASSWORD }}
+           LEETCODE_SESSION: ${{ secrets.LEETCODE_SESSION }}
+           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+           SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python agent.py
-
+        
       - name: Send cookie expired alert
         if: failure()
         uses: dawidd6/action-send-mail@v3
