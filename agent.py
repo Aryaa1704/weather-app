@@ -198,9 +198,11 @@ def submit_and_check(session, slug, question_id, solution):
         timeout=15
     )
     if resp.status_code != 200:
-        print(f"❌ Submit failed: {resp.status_code}")
-        return None
-
+    print(f"❌ Submit failed: {resp.status_code}")
+    print(f"Response: {resp.text[:1000]}")
+    print(f"CSRF present: {bool(csrf)}")
+    print(f"Cookies: {list(session.cookies.keys())}")
+    return None
     submission_id = resp.json().get("submission_id")
     print(f"📤 Submitted! ID: {submission_id}")
 
