@@ -1,7 +1,8 @@
 on:
   schedule:
-    - cron: '15 14 * * *'   # 7:45 PM IST
+    - cron: '10 16 * * *'   # 9:40 PM IST
   workflow_dispatch:
+  
 jobs:
   solve-daily:
     runs-on: ubuntu-latest
