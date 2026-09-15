@@ -1,6 +1,8 @@
+name: Keep Alive
+
 on:
   schedule:
-    - cron: '40 3 * * *'
+    - cron: '10 14 * * *'   # 7:40 PM IST
   workflow_dispatch:
 
 permissions:
@@ -11,8 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Keep repository active
         run: |
