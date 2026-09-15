@@ -1,10 +1,7 @@
-name: Keep Alive
-
 on:
   schedule:
-    - cron: '10 14 * * *'   # 7:40 PM IST
+    - cron: '5 16 * * *'   # 9:35 PM IST
   workflow_dispatch:
-
 permissions:
   contents: write
 
