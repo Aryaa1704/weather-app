@@ -1,6 +1,6 @@
 on:
   schedule:
-    - cron: '50 3 * * *'
+    - cron: '15 14 * * *'   # 7:45 PM IST
   workflow_dispatch:
 jobs:
   solve-daily:
