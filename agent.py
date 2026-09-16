@@ -295,12 +295,16 @@ def get_community_solutions(session, slug):
         "languageTags": ["python3"],
     }
 
-    try:
-        resp = session.post(
-           "https://leetcode.com/graphql/community_solutions",
-            json={"query": query, "variables": variables},
-            timeout=15,
-        )
+    resp = session.post(
+    "https://leetcode.com/graphql/community_solutions",
+    json={"query": query, "variables": variables},
+    timeout=15,
+    headers={
+        **session.headers,
+        "Referer": f"https://leetcode.com/problems/{slug}/solutions/",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+
 
         if resp.status_code != 200:
             print(f"⚠️ Community API failed: HTTP {resp.status_code}")
