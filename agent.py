@@ -387,19 +387,7 @@ def call_ai_provider(provider, prompt):
     }
     if name == "OpenRouter":
         headers["HTTP-Referer"] = "https://github.com/"
-        headers["X-Title"] = "LeetCode Daily Agent"
-
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "Return only the complete raw Python3 LeetCode solution."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.1,
-        "max_tokens": MAX_OUTPUT_TOKENS,
-        "stream": False,
-    }
-
+          # Community solution skipped — blocked on GitHub Actions
     try:
         print(f"🤖 Trying {name} ({model})...")
         resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
