@@ -297,7 +297,7 @@ def get_community_solutions(session, slug):
 
     try:
         resp = session.post(
-            "https://leetcode.com/graphql",
+           "https://leetcode.com/graphql/community_solutions",
             json={"query": query, "variables": variables},
             timeout=15,
         )
