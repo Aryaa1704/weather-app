@@ -1,8 +1,10 @@
+name: LeetCode Daily Agent
+
 on:
   schedule:
-    - cron: '10 16 * * *'   # 9:40 PM IST
+    - cron: '40 3 * * *'  # 9:10 AM IST
   workflow_dispatch:
-  
+
 jobs:
   solve-daily:
     runs-on: ubuntu-latest
@@ -36,7 +38,7 @@ jobs:
            CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
            HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python agent.py
-        
+
       - name: Send cookie expired alert
         if: failure()
         uses: dawidd6/action-send-mail@v3
