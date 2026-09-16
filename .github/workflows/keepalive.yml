@@ -2,7 +2,7 @@ name: Keep Alive
 
 on:
   schedule:
-    - cron: '35 13 * * *'  # TEST — abhi se 5 min baad (current UTC time + 5 min dal)
+    - cron: '50 2 * * *'  # TEST — 8:20 AM IST
   workflow_dispatch:
 
 permissions:
