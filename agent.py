@@ -304,7 +304,7 @@ def get_community_solutions(session, slug):
         "Referer": f"https://leetcode.com/problems/{slug}/solutions/",
         "X-Requested-With": "XMLHttpRequest",
     }
-
+)      
 
         if resp.status_code != 200:
             print(f"⚠️ Community API failed: HTTP {resp.status_code}")
