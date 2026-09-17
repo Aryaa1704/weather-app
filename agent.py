@@ -13,6 +13,7 @@ LEETCODE_USERNAME = os.getenv("LEETCODE_USERNAME")
 LEETCODE_PASSWORD = os.getenv("LEETCODE_PASSWORD")
 LEETCODE_SESSION = os.getenv("LEETCODE_SESSION")
 
+# AI provider keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -39,6 +40,9 @@ MAX_OUTPUT_TOKENS = 4096
 
 # =========================================================
 # AI PROVIDERS
+#
+# All providers below use an OpenAI-compatible chat endpoint.
+# A provider is used only when its key/config exists.
 # =========================================================
 AI_PROVIDERS = [
     {
@@ -126,12 +130,16 @@ def check_login(session):
         json={"query": "{ userStatus { username isSignedIn } }"},
         timeout=10,
     )
+
     data = resp.json().get("data", {}).get("userStatus", {})
     username = data.get("username", "")
     signed_in = data.get("isSignedIn", False)
+
     print(f"👤 User: {username} | Signed in: {signed_in}")
+
     if not signed_in:
         raise SystemExit("❌ Cookie expired! Email alert will be sent.")
+
     return True
 
 # =========================================================
@@ -154,6 +162,7 @@ def get_daily_challenge(session):
         }
     }
     """
+
     resp = session.post(
         "https://leetcode.com/graphql",
         json={"query": query},
@@ -164,6 +173,7 @@ def get_daily_challenge(session):
 
 
 def get_easy_problems(session, count=3):
+    """Fetch first N unsolved Easy problems."""
     query = """
     query problemsetQuestionList(
         $categorySlug: String,
@@ -188,18 +198,21 @@ def get_easy_problems(session, count=3):
         }
     }
     """
+
     variables = {
         "categorySlug": "",
         "limit": 100,
         "skip": 0,
         "filters": {"difficulty": "EASY"},
     }
+
     resp = session.post(
         "https://leetcode.com/graphql",
         json={"query": query, "variables": variables},
         timeout=15,
     )
     resp.raise_for_status()
+
     questions = resp.json()["data"]["problemsetQuestionList"]["questions"]
     unsolved = [q for q in questions if q.get("status") != "ac"]
     return unsolved[:count]
@@ -216,6 +229,7 @@ def get_problem_content(session, slug):
         }
     }
     """
+
     resp = session.post(
         "https://leetcode.com/graphql",
         json={"query": query, "variables": {"titleSlug": slug}},
@@ -230,15 +244,18 @@ def get_problem_content(session, slug):
 def extract_python_code(text):
     if not text:
         return None
+
     patterns = [
         r"```python3\s*(.*?)```",
         r"```python\s*(.*?)```",
         r"```py\s*(.*?)```",
     ]
+
     for pattern in patterns:
         match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
         if match:
             return match.group(1).strip()
+
     return None
 
 
@@ -269,6 +286,7 @@ def get_community_solutions(session, slug):
         }
     }
     """
+
     variables = {
         "questionSlug": slug,
         "skip": 0,
@@ -279,14 +297,9 @@ def get_community_solutions(session, slug):
 
     try:
         resp = session.post(
-            "https://leetcode.com/graphql/community_solutions",
+            "https://leetcode.com/graphql",
             json={"query": query, "variables": variables},
             timeout=15,
-            headers={
-                **dict(session.headers),
-                "Referer": f"https://leetcode.com/problems/{slug}/solutions/",
-                "X-Requested-With": "XMLHttpRequest",
-            }
         )
 
         if resp.status_code != 200:
@@ -303,6 +316,7 @@ def get_community_solutions(session, slug):
         for sol in solutions:
             if sol.get("langSlug") != "python3":
                 continue
+
             code = extract_python_code(sol.get("content", ""))
             if code:
                 return code
@@ -317,6 +331,7 @@ def get_community_solutions(session, slug):
 # =========================================================
 def build_prompt(title, content, tags):
     tags_str = ", ".join(tags) if tags else ""
+
     return f"""You are a world-class competitive programmer.
 Solve this LeetCode problem with a CORRECT Python3 solution.
 
@@ -341,10 +356,14 @@ RULES:
 def clean_ai_code(text):
     if not text:
         return None
+
     text = text.strip()
+
+    # Remove fenced markdown if a provider ignores the instruction.
     text = re.sub(r"^```python3?\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^```\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
+
     return text.strip() or None
 
 
@@ -353,8 +372,11 @@ def extract_response_text(payload):
         content = payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
         return None
+
     if isinstance(content, str):
         return content
+
+    # Some APIs may return structured content chunks.
     if isinstance(content, list):
         parts = []
         for item in content:
@@ -363,6 +385,7 @@ def extract_response_text(payload):
             elif isinstance(item, dict) and item.get("type") == "text":
                 parts.append(item.get("text", ""))
         return "".join(parts)
+
     return None
 
 # =========================================================
@@ -377,6 +400,7 @@ def call_ai_provider(provider, prompt):
     if not api_key:
         print(f"⏭️ {name}: API key not configured")
         return None
+
     if not url:
         print(f"⏭️ {name}: configuration incomplete")
         return None
@@ -385,12 +409,37 @@ def call_ai_provider(provider, prompt):
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+
+    # Provider-specific headers that are harmless/useful.
     if name == "OpenRouter":
         headers["HTTP-Referer"] = "https://github.com/"
-          # Community solution skipped — blocked on GitHub Actions
+        headers["X-Title"] = "LeetCode Daily Agent"
+
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "Return only the complete raw Python3 LeetCode solution.",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        "temperature": 0.1,
+        "max_tokens": MAX_OUTPUT_TOKENS,
+        "stream": False,
+    }
+
     try:
         print(f"🤖 Trying {name} ({model})...")
-        resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+        resp = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=REQUEST_TIMEOUT,
+        )
 
         if resp.status_code != 200:
             body = resp.text[:500].replace("\n", " ")
@@ -422,18 +471,23 @@ def call_ai_provider(provider, prompt):
 
 def get_solution_from_ai(title, content, tags):
     prompt = build_prompt(title, content, tags)
+
     print("\n🔄 AI FALLBACK CHAIN START")
+
     configured = 0
+
     for provider in AI_PROVIDERS:
         if provider.get("key") and provider.get("url"):
             configured += 1
             solution = call_ai_provider(provider, prompt)
             if solution:
                 return solution, provider["name"]
+
     if configured == 0:
         print("❌ No AI provider is configured.")
     else:
         print("❌ All configured AI providers failed.")
+
     return None, None
 
 # =========================================================
@@ -444,10 +498,6 @@ def submit_and_check(session, slug, question_id, solution):
     session.headers.update({
         "X-CSRFToken": csrf,
         "Referer": f"https://leetcode.com/problems/{slug}/",
-        "Origin": "https://leetcode.com",
-        "X-Requested-With": "XMLHttpRequest",
-        "Accept": "application/json",
-        "Accept-Language": "en-US,en;q=0.9",
     })
 
     try:
@@ -471,6 +521,7 @@ def submit_and_check(session, slug, question_id, solution):
         print(f"CSRF present: {bool(csrf)}")
         print(f"Cookies: {list(session.cookies.keys())}")
 
+        # Current GitHub Actions issue: LeetCode/Cloudflare challenge.
         if resp.status_code == 403 and (
             "just a moment" in resp.text.lower()
             or "cloudflare" in resp.text.lower()
@@ -495,6 +546,7 @@ def submit_and_check(session, slug, question_id, solution):
 
     for _ in range(20):
         time.sleep(3)
+
         try:
             check = session.get(
                 f"https://leetcode.com/submissions/detail/{submission_id}/check/",
@@ -518,7 +570,12 @@ def submit_and_check(session, slug, question_id, solution):
             print(f"🎯 Result: {status}")
             return status
 
-        if state in ["FAILURE", "RUNTIME_ERROR", "COMPILE_ERROR", "WRONG_ANSWER"]:
+        if state in [
+            "FAILURE",
+            "RUNTIME_ERROR",
+            "COMPILE_ERROR",
+            "WRONG_ANSWER",
+        ]:
             status = check_data.get("status_msg", state)
             print(f"❌ {status}")
             return status
@@ -535,44 +592,60 @@ def solve_problem(session, title, slug, question_id, content, tags, label=""):
     print(f"🔗 https://leetcode.com/problems/{slug}/")
     print(f"{'=' * 60}")
 
+    # -----------------------------------------------------
+    # 1. COMMUNITY FIRST
+    # -----------------------------------------------------
     print("👥 Checking community solution...")
     community = get_community_solutions(session, slug)
 
     if community:
         print("🔍 Trying community solution...")
         result = submit_and_check(session, slug, question_id, community)
+
         if result == "Accepted":
             print("🎉 Accepted via community solution!")
             return True
+
         if result == "SUBMISSION_BLOCKED":
             return False
+
         print("↪️ Community solution did not pass. Moving to AI fallback.")
     else:
         print("ℹ️ No usable Python community solution found.")
 
+    # -----------------------------------------------------
+    # 2. AI PROVIDER FALLBACK CHAIN
+    # -----------------------------------------------------
     solution, provider_name = get_solution_from_ai(title, content, tags)
 
     if not solution:
         print(f"⚠️ Could not generate a solution: {title}")
         return False
 
+    # First generated solution from the first working provider.
+    # If it is rejected by LeetCode, we do NOT call the same provider again.
+    # We continue to the next provider only for a normal judge rejection.
     result = submit_and_check(session, slug, question_id, solution)
 
     if result == "Accepted":
         print(f"🎉 Accepted via {provider_name}!")
         return True
+
     if result == "SUBMISSION_BLOCKED":
         return False
 
+    # If the generated solution is wrong, try the remaining providers once.
     prompt = build_prompt(title, content, tags)
-    passed_provider = False
 
+    passed_provider = False
     for provider in AI_PROVIDERS:
         if provider["name"] == provider_name:
             passed_provider = True
             continue
+
         if not passed_provider:
             continue
+
         if not provider.get("key") or not provider.get("url"):
             continue
 
@@ -581,9 +654,11 @@ def solve_problem(session, title, slug, question_id, content, tags, label=""):
             continue
 
         result = submit_and_check(session, slug, question_id, solution)
+
         if result == "Accepted":
             print(f"🎉 Accepted via {provider['name']}!")
             return True
+
         if result == "SUBMISSION_BLOCKED":
             return False
 
@@ -603,6 +678,9 @@ def run_agent():
 
     results = []
 
+    # -----------------------------------------------------
+    # PROBLEM 1: DAILY CHALLENGE
+    # -----------------------------------------------------
     print("\n🔥 DAILY CHALLENGE (Streak)")
     daily = get_daily_challenge(session)
     q = daily["question"]
@@ -614,12 +692,21 @@ def run_agent():
     print(f"Problem: {q['title']} [{q['difficulty']}]")
 
     daily_ok = solve_problem(
-        session, q["title"], q["titleSlug"], q["questionId"],
-        content, tags, label="Daily Challenge",
+        session,
+        q["title"],
+        q["titleSlug"],
+        q["questionId"],
+        content,
+        tags,
+        label="Daily Challenge",
     )
+
     results.append(("🔥 Daily Challenge", q["title"], q["difficulty"], daily_ok))
     time.sleep(10)
 
+    # -----------------------------------------------------
+    # PROBLEMS 2-4: 3 EASY PRACTICE QUESTIONS
+    # -----------------------------------------------------
     print("\n📚 EASY PRACTICE PROBLEMS (3)")
     easy_problems = get_easy_problems(session, count=3)
 
@@ -630,17 +717,27 @@ def run_agent():
         easy_tags = [t["name"] for t in data.get("topicTags", [])]
 
         ok = solve_problem(
-            session, eq["title"], eq["titleSlug"], eq["questionId"],
-            easy_content, easy_tags, label=f"Easy #{i}",
+            session,
+            eq["title"],
+            eq["titleSlug"],
+            eq["questionId"],
+            easy_content,
+            easy_tags,
+            label=f"Easy #{i}",
         )
+
         results.append((f"📗 Easy #{i}", eq["title"], "Easy", ok))
         time.sleep(10)
 
+    # -----------------------------------------------------
+    # SUMMARY
+    # -----------------------------------------------------
     print("\n" + "=" * 60)
     print("📊 FINAL SUMMARY")
     print("=" * 60)
 
     total_solved = 0
+
     for label, title, diff, success in results:
         status = "✅ Accepted" if success else "❌ Failed"
         print(f"{status} | {label}: {title} [{diff}]")
