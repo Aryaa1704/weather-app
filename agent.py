@@ -342,18 +342,16 @@ def submit_via_playwright(slug, question_id, solution):
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
                 viewport={"width": 1280, "height": 720},
             )
-            context.add_cookies([
-                {
-                    "name": "LEETCODE_SESSION",
-                    "value": LEETCODE_SESSION,
-                    "domain": "leetcode.com",
-                    "path": "/"
-                }
-            ])
+            context.add_cookies([{
+                "name": "LEETCODE_SESSION",
+                "value": LEETCODE_SESSION,
+                "domain": "leetcode.com",
+                "path": "/"
+            }])
 
             page = context.new_page()
             page.goto(f"https://leetcode.com/problems/{slug}/", wait_until="networkidle", timeout=60000)
-            time.sleep(5)  # Cloudflare challenge pass hone do
+            time.sleep(5)
 
             csrf = ""
             for cookie in context.cookies():
@@ -397,6 +395,7 @@ def submit_via_playwright(slug, question_id, solution):
     except Exception as e:
         print(f"❌ Playwright submit error: {e}")
         return None
+
 
 def check_submission(session, submission_id):
     for _ in range(20):
@@ -444,7 +443,7 @@ def submit_and_check(session, slug, question_id, solution):
         print(f"❌ Submit request error: {e}")
         return "SUBMISSION_ERROR"
 
-   if resp.status_code == 403:
+    if resp.status_code == 403:
         print("🌐 Cloudflare detected — switching to Playwright...")
         submission_id = submit_via_playwright(slug, question_id, solution)
         if submission_id:
