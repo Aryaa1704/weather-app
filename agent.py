@@ -332,29 +332,36 @@ def get_solution_from_ai(title, content, tags):
 
 
 def submit_via_playwright(slug, question_id, solution):
-    """Submit using Playwright browser to bypass Cloudflare."""
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36"
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox"]
             )
-            context.add_cookies([{
-                "name": "LEETCODE_SESSION",
-                "value": LEETCODE_SESSION,
-                "domain": "leetcode.com",
-                "path": "/"
-            }])
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 720},
+            )
+            context.add_cookies([
+                {
+                    "name": "LEETCODE_SESSION",
+                    "value": LEETCODE_SESSION,
+                    "domain": "leetcode.com",
+                    "path": "/"
+                }
+            ])
 
             page = context.new_page()
-            page.goto(f"https://leetcode.com/problems/{slug}/", wait_until="networkidle", timeout=30000)
-            time.sleep(3)
+            page.goto(f"https://leetcode.com/problems/{slug}/", wait_until="networkidle", timeout=60000)
+            time.sleep(5)  # Cloudflare challenge pass hone do
 
             csrf = ""
             for cookie in context.cookies():
                 if cookie["name"] == "csrftoken":
                     csrf = cookie["value"]
                     break
+
+            print(f"🍪 CSRF via Playwright: {bool(csrf)}")
 
             result = page.evaluate(f"""
                 async () => {{
@@ -372,18 +379,24 @@ def submit_via_playwright(slug, question_id, solution):
                             typed_code: solution
                         }})
                     }});
-                    return await resp.json();
+                    const text = await resp.text();
+                    return {{ status: resp.status, body: text }};
                 }}
             """)
 
+            print(f"🌐 Playwright response: {result.get('status')} | {result.get('body', '')[:200]}")
             browser.close()
-            submission_id = result.get("submission_id")
-            return submission_id
+
+            body = result.get("body", "")
+            try:
+                data = json.loads(body)
+                return data.get("submission_id")
+            except:
+                return None
 
     except Exception as e:
         print(f"❌ Playwright submit error: {e}")
         return None
-
 
 def check_submission(session, submission_id):
     for _ in range(20):
@@ -431,11 +444,7 @@ def submit_and_check(session, slug, question_id, solution):
         print(f"❌ Submit request error: {e}")
         return "SUBMISSION_ERROR"
 
-    if resp.status_code == 403 and (
-        "just a moment" in resp.text.lower()
-        or "cloudflare" in resp.text.lower()
-        or "challenges.cloudflare.com" in resp.text.lower()
-    ):
+   if resp.status_code == 403:
         print("🌐 Cloudflare detected — switching to Playwright...")
         submission_id = submit_via_playwright(slug, question_id, solution)
         if submission_id:
