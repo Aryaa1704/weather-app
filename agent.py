@@ -712,7 +712,7 @@ def run_agent():
 
     for i, eq in enumerate(easy_problems, 1):
         data = get_problem_content(session, eq["titleSlug"])
-        easy_content = re.sub(r"<[^<]+?>", " ", data["content"])
+        easy_content = re.sub(r"<[^<]+?>", " ", data["content"] or "")
         easy_content = re.sub(r"\s+", " ", easy_content).strip()
         easy_tags = [t["name"] for t in data.get("topicTags", [])]
 
