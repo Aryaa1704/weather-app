@@ -20,7 +20,10 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
-
+        
+      - name: Install Playwright browsers
+        run: pip install playwright && playwright install chromium --with-deps
+        
       - name: Run LeetCode Agent
         id: run_agent
         env:
