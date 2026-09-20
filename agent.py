@@ -342,6 +342,13 @@ def submit_via_playwright(slug, question_id, solution):
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36",
                 viewport={"width": 1280, "height": 720},
             )
+
+            page = context.new_page()
+
+            # Pehle leetcode.com open kar
+            page.goto("https://leetcode.com/", wait_until="networkidle", timeout=30000)
+
+            # Ab cookie set kar
             context.add_cookies([{
                 "name": "LEETCODE_SESSION",
                 "value": LEETCODE_SESSION,
@@ -349,7 +356,7 @@ def submit_via_playwright(slug, question_id, solution):
                 "path": "/"
             }])
 
-            page = context.new_page()
+            # Problem page pe ja
             page.goto(f"https://leetcode.com/problems/{slug}/", wait_until="networkidle", timeout=60000)
             time.sleep(5)
 
@@ -369,7 +376,8 @@ def submit_via_playwright(slug, question_id, solution):
                         headers: {{
                             'Content-Type': 'application/json',
                             'X-CSRFToken': '{csrf}',
-                            'Referer': 'https://leetcode.com/problems/{slug}/'
+                            'Referer': 'https://leetcode.com/problems/{slug}/',
+                            'Origin': 'https://leetcode.com'
                         }},
                         body: JSON.stringify({{
                             lang: 'python3',
