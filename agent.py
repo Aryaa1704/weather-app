@@ -1,4 +1,3 @@
-import os
 import re
 import time
 import requests
@@ -238,6 +237,19 @@ def get_problem_content(session, slug):
     resp.raise_for_status()
     return resp.json()["data"]["question"]
 
+
+def clean_problem_content(data):
+    if not isinstance(data, dict):
+        return None
+
+    content = data.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return None
+
+    content = re.sub(r"<[^<]+?>", " ", content)
+    return re.sub(r"\s+", " ", content).strip() or None
+
+
 # =========================================================
 # COMMUNITY SOLUTION
 # =========================================================
@@ -350,6 +362,16 @@ RULES:
 - Match the exact LeetCode function/class signature required by the problem.
 - Handle edge cases.
 - Prefer a correct efficient solution suitable for LeetCode constraints.
+"""
+
+
+def build_retry_prompt(title, content, tags, failure_status):
+    return f"""{build_prompt(title, content, tags)}
+
+The previous candidate failed on LeetCode with: {failure_status}
+Generate a fresh solution from scratch. Re-check the required class and method
+signature, input/output assumptions, initialization, indexing, and empty or
+boundary cases. Do not repeat the previous implementation.
 """
 
 
@@ -567,6 +589,9 @@ def submit_and_check(session, slug, question_id, solution):
 
         if state == "SUCCESS":
             status = check_data.get("status_msg", "Unknown")
+            error_message = check_data.get("runtime_error")
+            if error_message:
+                print(f"🧪 Runtime details: {error_message}")
             print(f"🎯 Result: {status}")
             return status
 
@@ -635,7 +660,7 @@ def solve_problem(session, title, slug, question_id, content, tags, label=""):
         return False
 
     # If the generated solution is wrong, try the remaining providers once.
-    prompt = build_prompt(title, content, tags)
+    prompt = build_retry_prompt(title, content, tags, result)
 
     passed_provider = False
     for provider in AI_PROVIDERS:
@@ -685,8 +710,9 @@ def run_agent():
     daily = get_daily_challenge(session)
     q = daily["question"]
 
-    content = re.sub(r"<[^<]+?>", " ", q["content"])
-    content = re.sub(r"\s+", " ", content).strip()
+    content = clean_problem_content(q)
+    if not content:
+        raise SystemExit("❌ Daily challenge returned no problem content.")
     tags = [t["name"] for t in q.get("topicTags", [])]
 
     print(f"Problem: {q['title']} [{q['difficulty']}]")
@@ -712,8 +738,11 @@ def run_agent():
 
     for i, eq in enumerate(easy_problems, 1):
         data = get_problem_content(session, eq["titleSlug"])
-        easy_content = re.sub(r"<[^<]+?>", " ", data["content"])
-        easy_content = re.sub(r"\s+", " ", easy_content).strip()
+        easy_content = clean_problem_content(data)
+        if not easy_content:
+            print(f"⚠️ Skipping {eq['title']}: LeetCode returned no problem content.")
+            results.append((f"📗 Easy #{i}", eq["title"], "Easy", False))
+            continue
         easy_tags = [t["name"] for t in data.get("topicTags", [])]
 
         ok = solve_problem(
