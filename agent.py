@@ -12,17 +12,10 @@ LEETCODE_USERNAME = os.getenv("LEETCODE_USERNAME")
 LEETCODE_PASSWORD = os.getenv("LEETCODE_PASSWORD")
 LEETCODE_SESSION = os.getenv("LEETCODE_SESSION")
 
-# AI provider keys
+# Free-tier AI provider keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
-CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY")
-SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
-CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
-CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
-HF_TOKEN = os.getenv("HF_TOKEN")
 
 # =========================================================
 # HTTP
@@ -40,7 +33,7 @@ MAX_OUTPUT_TOKENS = 4096
 # =========================================================
 # AI PROVIDERS
 #
-# All providers below use an OpenAI-compatible chat endpoint.
+# Providers below are intended for free-tier use only.
 # A provider is used only when its key/config exists.
 # =========================================================
 AI_PROVIDERS = [
@@ -57,45 +50,10 @@ AI_PROVIDERS = [
         "model": "openai/gpt-oss-120b",
     },
     {
-        "name": "Cerebras",
-        "key": CEREBRAS_API_KEY,
-        "url": "https://api.cerebras.ai/v1/chat/completions",
-        "model": "gpt-oss-120b",
-    },
-    {
-        "name": "SambaNova",
-        "key": SAMBANOVA_API_KEY,
-        "url": "https://api.sambanova.ai/v1/chat/completions",
-        "model": "gpt-oss-120b",
-    },
-    {
-        "name": "Mistral AI",
-        "key": MISTRAL_API_KEY,
-        "url": "https://api.mistral.ai/v1/chat/completions",
-        "model": "mistral-small-latest",
-    },
-    {
         "name": "OpenRouter",
         "key": OPENROUTER_API_KEY,
         "url": "https://openrouter.ai/api/v1/chat/completions",
         "model": "openrouter/free",
-    },
-    {
-        "name": "Cloudflare Workers AI",
-        "key": CLOUDFLARE_API_TOKEN,
-        "url": (
-            f"https://api.cloudflare.com/client/v4/accounts/"
-            f"{CLOUDFLARE_ACCOUNT_ID}/ai/v1/chat/completions"
-            if CLOUDFLARE_ACCOUNT_ID
-            else None
-        ),
-        "model": "@cf/openai/gpt-oss-120b",
-    },
-    {
-        "name": "Hugging Face",
-        "key": HF_TOKEN,
-        "url": "https://router.huggingface.co/v1/chat/completions",
-        "model": "openai/gpt-oss-120b:fastest",
     },
 ]
 
