@@ -57,12 +57,6 @@ AI_PROVIDERS = [
         "model": "openai/gpt-oss-120b",
     },
     {
-        "name": "NVIDIA NIM",
-        "key": NVIDIA_API_KEY,
-        "url": "https://integrate.api.nvidia.com/v1/chat/completions",
-        "model": "openai/gpt-oss-120b",
-    },
-    {
         "name": "Cerebras",
         "key": CEREBRAS_API_KEY,
         "url": "https://api.cerebras.ai/v1/chat/completions",
@@ -454,7 +448,8 @@ def call_ai_provider(provider, prompt):
         "stream": False,
     }
 
-    try:
+    for attempt in range(3):
+      try:
         print(f"🤖 Trying {name} ({model})...")
         resp = requests.post(
             url,
@@ -462,6 +457,24 @@ def call_ai_provider(provider, prompt):
             json=payload,
             timeout=REQUEST_TIMEOUT,
         )
+
+        if resp.status_code == 429:
+            retry_after = resp.headers.get("Retry-After")
+            try:
+                delay = min(float(retry_after), 60) if retry_after else 2 ** attempt
+            except ValueError:
+                delay = 2 ** attempt
+            if attempt < 2:
+                print(f"⏳ {name}: rate limited, retrying in {delay:g}s")
+                time.sleep(delay)
+                continue
+            print(f"❌ {name} failed: rate limit persisted after retries")
+            return None
+
+        if resp.status_code in (401, 402, 403, 404, 410):
+            body = resp.text[:500].replace("\n", " ")
+            print(f"❌ {name} failed: HTTP {resp.status_code} | {body}")
+            return None
 
         if resp.status_code != 200:
             body = resp.text[:500].replace("\n", " ")
@@ -479,14 +492,16 @@ def call_ai_provider(provider, prompt):
         print(f"✅ {name}: solution generated")
         return code
 
-    except requests.Timeout:
+      except requests.Timeout:
         print(f"⏱️ {name}: timeout")
-    except requests.RequestException as e:
+      except requests.RequestException as e:
         print(f"❌ {name}: network error: {e}")
-    except ValueError as e:
+      except ValueError as e:
         print(f"❌ {name}: invalid JSON response: {e}")
-    except Exception as e:
+      except Exception as e:
         print(f"❌ {name}: unexpected error: {e}")
+
+      return None
 
     return None
 
