@@ -1,4 +1,3 @@
-import os
 import re
 import time
 import requests
@@ -13,17 +12,10 @@ LEETCODE_USERNAME = os.getenv("LEETCODE_USERNAME")
 LEETCODE_PASSWORD = os.getenv("LEETCODE_PASSWORD")
 LEETCODE_SESSION = os.getenv("LEETCODE_SESSION")
 
-# AI provider keys
+# Free-tier AI provider keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
-CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY")
-SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY")
-CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
-CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
-HF_TOKEN = os.getenv("HF_TOKEN")
 
 # =========================================================
 # HTTP
@@ -41,7 +33,7 @@ MAX_OUTPUT_TOKENS = 4096
 # =========================================================
 # AI PROVIDERS
 #
-# All providers below use an OpenAI-compatible chat endpoint.
+# Providers below are intended for free-tier use only.
 # A provider is used only when its key/config exists.
 # =========================================================
 AI_PROVIDERS = [
@@ -58,51 +50,10 @@ AI_PROVIDERS = [
         "model": "openai/gpt-oss-120b",
     },
     {
-        "name": "NVIDIA NIM",
-        "key": NVIDIA_API_KEY,
-        "url": "https://integrate.api.nvidia.com/v1/chat/completions",
-        "model": "openai/gpt-oss-120b",
-    },
-    {
-        "name": "Cerebras",
-        "key": CEREBRAS_API_KEY,
-        "url": "https://api.cerebras.ai/v1/chat/completions",
-        "model": "gpt-oss-120b",
-    },
-    {
-        "name": "SambaNova",
-        "key": SAMBANOVA_API_KEY,
-        "url": "https://api.sambanova.ai/v1/chat/completions",
-        "model": "gpt-oss-120b",
-    },
-    {
-        "name": "Mistral AI",
-        "key": MISTRAL_API_KEY,
-        "url": "https://api.mistral.ai/v1/chat/completions",
-        "model": "mistral-small-latest",
-    },
-    {
         "name": "OpenRouter",
         "key": OPENROUTER_API_KEY,
         "url": "https://openrouter.ai/api/v1/chat/completions",
         "model": "openrouter/free",
-    },
-    {
-        "name": "Cloudflare Workers AI",
-        "key": CLOUDFLARE_API_TOKEN,
-        "url": (
-            f"https://api.cloudflare.com/client/v4/accounts/"
-            f"{CLOUDFLARE_ACCOUNT_ID}/ai/v1/chat/completions"
-            if CLOUDFLARE_ACCOUNT_ID
-            else None
-        ),
-        "model": "@cf/openai/gpt-oss-120b",
-    },
-    {
-        "name": "Hugging Face",
-        "key": HF_TOKEN,
-        "url": "https://router.huggingface.co/v1/chat/completions",
-        "model": "openai/gpt-oss-120b:fastest",
     },
 ]
 
@@ -238,6 +189,19 @@ def get_problem_content(session, slug):
     resp.raise_for_status()
     return resp.json()["data"]["question"]
 
+
+def clean_problem_content(data):
+    if not isinstance(data, dict):
+        return None
+
+    content = data.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return None
+
+    content = re.sub(r"<[^<]+?>", " ", content)
+    return re.sub(r"\s+", " ", content).strip() or None
+
+
 # =========================================================
 # COMMUNITY SOLUTION
 # =========================================================
@@ -353,6 +317,16 @@ RULES:
 """
 
 
+def build_retry_prompt(title, content, tags, failure_status):
+    return f"""{build_prompt(title, content, tags)}
+
+The previous candidate failed on LeetCode with: {failure_status}
+Generate a fresh solution from scratch. Re-check the required class and method
+signature, input/output assumptions, initialization, indexing, and empty or
+boundary cases. Do not repeat the previous implementation.
+"""
+
+
 def clean_ai_code(text):
     if not text:
         return None
@@ -432,7 +406,8 @@ def call_ai_provider(provider, prompt):
         "stream": False,
     }
 
-    try:
+    for attempt in range(3):
+      try:
         print(f"🤖 Trying {name} ({model})...")
         resp = requests.post(
             url,
@@ -440,6 +415,24 @@ def call_ai_provider(provider, prompt):
             json=payload,
             timeout=REQUEST_TIMEOUT,
         )
+
+        if resp.status_code == 429:
+            retry_after = resp.headers.get("Retry-After")
+            try:
+                delay = min(float(retry_after), 60) if retry_after else 2 ** attempt
+            except ValueError:
+                delay = 2 ** attempt
+            if attempt < 2:
+                print(f"⏳ {name}: rate limited, retrying in {delay:g}s")
+                time.sleep(delay)
+                continue
+            print(f"❌ {name} failed: rate limit persisted after retries")
+            return None
+
+        if resp.status_code in (401, 402, 403, 404, 410):
+            body = resp.text[:500].replace("\n", " ")
+            print(f"❌ {name} failed: HTTP {resp.status_code} | {body}")
+            return None
 
         if resp.status_code != 200:
             body = resp.text[:500].replace("\n", " ")
@@ -457,14 +450,16 @@ def call_ai_provider(provider, prompt):
         print(f"✅ {name}: solution generated")
         return code
 
-    except requests.Timeout:
+      except requests.Timeout:
         print(f"⏱️ {name}: timeout")
-    except requests.RequestException as e:
+      except requests.RequestException as e:
         print(f"❌ {name}: network error: {e}")
-    except ValueError as e:
+      except ValueError as e:
         print(f"❌ {name}: invalid JSON response: {e}")
-    except Exception as e:
+      except Exception as e:
         print(f"❌ {name}: unexpected error: {e}")
+
+      return None
 
     return None
 
@@ -567,6 +562,9 @@ def submit_and_check(session, slug, question_id, solution):
 
         if state == "SUCCESS":
             status = check_data.get("status_msg", "Unknown")
+            error_message = check_data.get("runtime_error")
+            if error_message:
+                print(f"🧪 Runtime details: {error_message}")
             print(f"🎯 Result: {status}")
             return status
 
@@ -635,7 +633,7 @@ def solve_problem(session, title, slug, question_id, content, tags, label=""):
         return False
 
     # If the generated solution is wrong, try the remaining providers once.
-    prompt = build_prompt(title, content, tags)
+    prompt = build_retry_prompt(title, content, tags, result)
 
     passed_provider = False
     for provider in AI_PROVIDERS:
@@ -685,8 +683,9 @@ def run_agent():
     daily = get_daily_challenge(session)
     q = daily["question"]
 
-    content = re.sub(r"<[^<]+?>", " ", q["content"])
-    content = re.sub(r"\s+", " ", content).strip()
+    content = clean_problem_content(q)
+    if not content:
+        raise SystemExit("❌ Daily challenge returned no problem content.")
     tags = [t["name"] for t in q.get("topicTags", [])]
 
     print(f"Problem: {q['title']} [{q['difficulty']}]")
@@ -712,8 +711,11 @@ def run_agent():
 
     for i, eq in enumerate(easy_problems, 1):
         data = get_problem_content(session, eq["titleSlug"])
-        easy_content = re.sub(r"<[^<]+?>", " ", data["content"])
-        easy_content = re.sub(r"\s+", " ", easy_content).strip()
+        easy_content = clean_problem_content(data)
+        if not easy_content:
+            print(f"⚠️ Skipping {eq['title']}: LeetCode returned no problem content.")
+            results.append((f"📗 Easy #{i}", eq["title"], "Easy", False))
+            continue
         easy_tags = [t["name"] for t in data.get("topicTags", [])]
 
         ok = solve_problem(
