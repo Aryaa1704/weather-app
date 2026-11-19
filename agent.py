@@ -177,6 +177,7 @@ def get_daily_challenge(session):
                 difficulty
                 questionId
                 topicTags { name }
+                codeSnippets { lang langSlug code }
             }
         }
     }
@@ -276,6 +277,7 @@ def get_problem_content(session, slug):
             title
             content
             topicTags { name }
+            codeSnippets { lang langSlug code }
         }
     }
     """
@@ -430,28 +432,77 @@ def get_community_solutions(session, slug):
 # =========================================================
 # AI PROMPT / RESPONSE CLEANUP
 # =========================================================
-def build_prompt(title, content, tags):
-    tags_str = ", ".join(tags) if tags else ""
+def get_python_starter_code(question):
+    """Return LeetCode's official Python3 starter template, if available."""
+    snippets = (question or {}).get("codeSnippets") or []
+    for snippet in snippets:
+        lang_slug = (snippet.get("langSlug") or "").lower()
+        lang = (snippet.get("lang") or "").lower()
+        if lang_slug in {"python3", "python"} or lang in {"python3", "python"}:
+            return snippet.get("code") or ""
+    return ""
 
-    return f"""You are a world-class competitive programmer.
-Solve this LeetCode problem with a CORRECT Python3 solution.
+
+def get_required_method_name(starter_code):
+    """Extract the method name LeetCode's driver expects."""
+    if not starter_code:
+        return None
+    match = re.search(
+        r"^\s*def\s+([A-Za-z_]\w*)\s*\(",
+        starter_code,
+        re.MULTILINE,
+    )
+    return match.group(1) if match else None
+
+
+def solution_has_required_method(solution, required_method):
+    if not required_method:
+        return True
+    pattern = rf"^\s*def\s+{re.escape(required_method)}\s*\("
+    return re.search(pattern, solution or "", re.MULTILINE) is not None
+
+
+def build_prompt(title, content, tags, starter_code=""):
+    tags_str = ", ".join(tags) if tags else ""
+    required_method = get_required_method_name(starter_code)
+
+    if starter_code:
+        starter_section = (
+            "Official LeetCode Python3 starter code. Preserve its exact "
+            "class and method names:\n" + starter_code
+        )
+    else:
+        starter_section = (
+            "Official Python3 starter code was unavailable. Infer the "
+            "exact required LeetCode signature carefully."
+        )
+
+    method_rule = (
+        f"- REQUIRED method name: {required_method}. The Solution class "
+        f"MUST define this exact method name.\n"
+        if required_method else
+        "- Preserve the exact LeetCode method signature; do not invent or rename it.\n"
+    )
+
+    return f"""You are solving a LeetCode problem. Produce a correct Python3 submission.
 
 Problem: {title}
 Tags: {tags_str}
 
-Description:
+Problem statement:
 {content}
 
-RULES:
-- Return ONLY raw Python3 code.
-- No markdown.
-- No backticks.
-- No explanation.
-- Include all necessary imports.
-- Match the exact LeetCode function/class signature required by the problem.
-- Handle edge cases.
-- Prefer a correct efficient solution suitable for LeetCode constraints.
+{starter_section}
+
+STRICT REQUIREMENTS:
+- Return ONLY complete raw Python3 code. No Markdown fences or explanation.
+- Keep class Solution and preserve the exact method name and parameters from the official starter code.
+{method_rule}- Do not substitute a similarly named method (for example, minScore is NOT minimizeSum).
+- Include necessary imports.
+- Handle edge cases and use an efficient algorithm.
 """
+
+
 
 
 def clean_ai_code(text):
@@ -570,24 +621,35 @@ def call_ai_provider(provider, prompt):
     return None
 
 
-def get_solution_from_ai(title, content, tags):
-    prompt = build_prompt(title, content, tags)
+def get_solution_from_ai(title, content, tags, starter_code=''):
+    prompt = build_prompt(title, content, tags, starter_code)
+    required_method = get_required_method_name(starter_code)
 
     print("\n🔄 AI FALLBACK CHAIN START")
-
     configured = 0
 
     for provider in AI_PROVIDERS:
-        if provider.get("key") and provider.get("url"):
-            configured += 1
-            solution = call_ai_provider(provider, prompt)
-            if solution:
-                return solution, provider["name"]
+        if not provider.get("key") or not provider.get("url"):
+            continue
+
+        configured += 1
+        solution = call_ai_provider(provider, prompt)
+        if not solution:
+            continue
+
+        if not solution_has_required_method(solution, required_method):
+            print(
+                f"⚠️ {provider['name']} used the wrong method signature; "
+                f"expected {required_method}. Trying the next provider."
+            )
+            continue
+
+        return solution, provider["name"]
 
     if configured == 0:
         print("❌ No AI provider is configured.")
     else:
-        print("❌ All configured AI providers failed.")
+        print("❌ No provider returned a solution with the required method signature.")
 
     return None, None
 
@@ -689,7 +751,7 @@ def submit_and_check(session, slug, question_id, solution):
 # =========================================================
 # SOLVE ONE PROBLEM
 # =========================================================
-def solve_problem(session, title, slug, question_id, content, tags, label=""):
+def solve_problem(session, title, slug, question_id, content, tags, starter_code="", label=""):
     print(f"\n{'=' * 60}")
     print(f"📝 {label}: {title}")
     print(f"🔗 https://leetcode.com/problems/{slug}/")
@@ -700,6 +762,11 @@ def solve_problem(session, title, slug, question_id, content, tags, label=""):
     # -----------------------------------------------------
     print("👥 Checking community solution...")
     community = get_community_solutions(session, slug)
+
+    required_method = get_required_method_name(starter_code)
+    if community and not solution_has_required_method(community, required_method):
+        print(f"⚠️ Community code has the wrong method signature; expected {required_method}. Skipping it.")
+        community = None
 
     if community:
         print("🔍 Trying community solution...")
@@ -719,10 +786,14 @@ def solve_problem(session, title, slug, question_id, content, tags, label=""):
     # -----------------------------------------------------
     # 2. AI PROVIDER FALLBACK CHAIN
     # -----------------------------------------------------
-    solution, provider_name = get_solution_from_ai(title, content, tags)
+    solution, provider_name = get_solution_from_ai(title, content, tags, starter_code)
+
+    if solution and not solution_has_required_method(solution, required_method):
+        print(f"⚠️ {provider_name} returned the wrong method signature; expected {required_method}. Skipping submission.")
+        solution = None
 
     if not solution:
-        print(f"⚠️ Could not generate a solution: {title}")
+        print(f"⚠️ Could not generate a valid-signature solution: {title}")
         return False
 
     # First generated solution from the first working provider.
@@ -738,7 +809,7 @@ def solve_problem(session, title, slug, question_id, content, tags, label=""):
         return False
 
     # If the generated solution is wrong, try the remaining providers once.
-    prompt = build_prompt(title, content, tags)
+    prompt = build_prompt(title, content, tags, starter_code)
 
     passed_provider = False
     for provider in AI_PROVIDERS:
@@ -754,6 +825,9 @@ def solve_problem(session, title, slug, question_id, content, tags, label=""):
 
         solution = call_ai_provider(provider, prompt)
         if not solution:
+            continue
+        if not solution_has_required_method(solution, required_method):
+            print(f"⚠️ {provider['name']} returned the wrong method signature; expected {required_method}. Skipping submission.")
             continue
 
         result = submit_and_check(session, slug, question_id, solution)
@@ -773,7 +847,7 @@ def solve_problem(session, title, slug, question_id, content, tags, label=""):
 # =========================================================
 def run_agent():
     print("🚀 LeetCode Agent Starting...")
-    print("🎯 Target: 4 questions/day = 1 Daily + 3 Easy")
+    print("🎯 Target: 4 questions/day = 1 Daily + 3 random Easy/Medium/Hard")
     print("🔁 Flow: Community → AI providers → next provider → FAILED")
 
     session = create_session()
@@ -806,6 +880,7 @@ def run_agent():
             q["questionId"],
             content,
             tags,
+            starter_code=get_python_starter_code(q),
             label="Daily Challenge",
         )
 
@@ -850,6 +925,7 @@ def run_agent():
             eq["questionId"],
             easy_content,
             easy_tags,
+            starter_code=get_python_starter_code(data),
             label=f"Practice #{i}",
         )
 
