@@ -99,10 +99,10 @@ def get_contest_reminders(s):
                 slug = contest.get("titleSlug")
                 link = f"https://leetcode.com/contest/{slug}/" if slug else "https://leetcode.com/contest/"
                 duration = int(contest.get("duration") or 0)
-                duration_text = f"\\nDuration: {duration // 60} minutes" if duration else ""
+                duration_text = f"\nDuration: {duration // 60} minutes" if duration else ""
                 result.append(
-                    f"🏁 {title}\\nStarts: {start_dt.astimezone(ist).strftime('%d %b %Y, %I:%M %p IST')}"
-                    f"{duration_text}\\nRegister manually: {link}"
+                    f"🏁 {title}\nStarts: {start_dt.astimezone(ist).strftime('%d %b %Y, %I:%M %p IST')}"
+                    f"{duration_text}\nRegister manually: {link}"
                 )
         except (KeyError, TypeError, ValueError, OSError):
             continue
