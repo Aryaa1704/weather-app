@@ -2,7 +2,7 @@ name: Keep Alive
 
 on:
   schedule:
-    - cron: '55 3 * * *'  # 9:25 AM IST
+    - cron: '35 7 * * *'  # 1:05 PM IST daily
   workflow_dispatch:
 
 permissions:
