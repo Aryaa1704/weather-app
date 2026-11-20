@@ -24,10 +24,15 @@ def session():
 
 def gql(s, query, variables=None):
     r = s.post(GRAPHQL, json={"query": query, "variables": variables or {}}, timeout=TIMEOUT)
-    r.raise_for_status()
-    data = r.json()
+    if not r.ok:
+        # LeetCode often returns a useful GraphQL validation message in the HTTP 400 body.
+        raise RuntimeError(f"LeetCode GraphQL HTTP {r.status_code}: {r.text[:1200]}")
+    try:
+        data = r.json()
+    except ValueError:
+        raise RuntimeError(f"LeetCode returned non-JSON response: {r.text[:800]}")
     if data.get("errors"):
-        raise RuntimeError(str(data["errors"])[:400])
+        raise RuntimeError(f"LeetCode GraphQL errors: {str(data['errors'])[:1000]}")
     return data.get("data") or {}
 
 
@@ -55,9 +60,9 @@ def get_profile(s, username):
         username
         profile { ranking reputation }
         submitStats { acSubmissionNum { difficulty count submissions } }
-        badges { id name shortName displayName icon }
+        badges { id displayName icon }
       }
-      userContestRankingInfo(username: $username) {
+      userContestRanking(username: $username) {
         attendedContestsCount rating globalRanking topPercentage
       }
     }
@@ -66,7 +71,7 @@ def get_profile(s, username):
     user = data.get("matchedUser")
     if not user:
         raise RuntimeError("LeetCode public profile not found or unavailable.")
-    return user, data.get("userContestRankingInfo")
+    return user, data.get("userContestRanking")
 
 
 def get_calendar(s, username):
