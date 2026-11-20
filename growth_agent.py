@@ -55,57 +55,56 @@ def summary(message):
 
 def get_profile(s, username):
     query = """
-    query growthProfile($username: String!) {
+    query growthProfile($username: String!, $year: Int!) {
       matchedUser(username: $username) {
         username
         profile { ranking reputation }
         submitStats { acSubmissionNum { difficulty count submissions } }
         badges { id displayName icon }
+        userCalendar(year: $year) { streak totalActiveDays submissionCalendar }
       }
       userContestRanking(username: $username) {
         attendedContestsCount rating globalRanking topPercentage
       }
     }
     """
-    data = gql(s, query, {"username": username})
+    data = gql(s, query, {"username": username, "year": datetime.now(timezone.utc).year})
     user = data.get("matchedUser")
     if not user:
         raise RuntimeError("LeetCode public profile not found or unavailable.")
-    return user, data.get("userContestRanking")
+    return user, data.get("userContestRanking"), user.get("userCalendar") or {}
 
 
-def get_calendar(s, username):
+def get_contest_reminders(s):
+    # Use LeetCode's public GraphQL contest list instead of the retired REST endpoint.
     query = """
-    query growthCalendar($username: String!, $year: Int!) {
-      userCalendar(username: $username, year: $year) { streak totalActiveDays submissionCalendar }
+    query upcomingGrowthContests {
+      upcomingContests {
+        title
+        titleSlug
+        startTime
+        duration
+      }
     }
     """
-    try:
-        return gql(s, query, {"username": username, "year": datetime.now(timezone.utc).year}).get("userCalendar") or {}
-    except Exception as exc:
-        print(f"Calendar unavailable: {exc}")
-        return {}
-
-
-def get_contest_reminders():
-    r = requests.get("https://leetcode.com/contest/api/list/", headers=HEADERS, timeout=TIMEOUT)
-    r.raise_for_status()
-    payload = r.json()
-    contests = payload if isinstance(payload, list) else payload.get("contests", [])
+    contests = gql(s, query).get("upcomingContests") or []
     now = datetime.now(timezone.utc)
     result = []
     ist = timezone(timedelta(hours=5, minutes=30))
     for contest in contests:
         try:
-            start = int(contest.get("start_time") or contest.get("startTime"))
-            start_dt = datetime.fromtimestamp(start, timezone.utc)
+            start_dt = datetime.fromtimestamp(int(contest["startTime"]), timezone.utc)
             if timedelta(0) <= start_dt - now <= timedelta(hours=48):
-                title = contest.get("title") or contest.get("title_slug") or "LeetCode contest"
+                title = contest.get("title") or contest.get("titleSlug") or "LeetCode contest"
+                slug = contest.get("titleSlug")
+                link = f"https://leetcode.com/contest/{slug}/" if slug else "https://leetcode.com/contest/"
+                duration = int(contest.get("duration") or 0)
+                duration_text = f"\nDuration: {duration // 60} minutes" if duration else ""
                 result.append(
-                    f"🏁 {title}\nStarts: {start_dt.astimezone(ist).strftime('%d %b %Y, %I:%M %p IST')}\n"
-                    "Register manually: https://leetcode.com/contest/"
+                    f"🏁 {title}\nStarts: {start_dt.astimezone(ist).strftime('%d %b %Y, %I:%M %p IST')}"
+                    f"{duration_text}\nRegister manually: {link}"
                 )
-        except (TypeError, ValueError, OSError):
+        except (KeyError, TypeError, ValueError, OSError):
             continue
     return result
 
@@ -179,8 +178,7 @@ def main():
     if not USERNAME:
         raise SystemExit("Set LEETCODE_USERNAME.")
     s = session()
-    user, contest = get_profile(s, USERNAME)
-    calendar = get_calendar(s, USERNAME)
+    user, contest, calendar = get_profile(s, USERNAME)
     stats = {x.get("difficulty"): x.get("count", 0) for x in (user.get("submitStats") or {}).get("acSubmissionNum", [])}
     profile = user.get("profile") or {}
     badges = user.get("badges") or []
@@ -202,7 +200,7 @@ def main():
         lines += ["", "### Badges"] + [f"- {b.get('displayName') or b.get('name') or b.get('shortName')}" for b in badges[:20]]
     summary("\n".join(lines))
 
-    reminders = get_contest_reminders()
+    reminders = get_contest_reminders(s)
     for message in reminders:
         telegram("Upcoming LeetCode contest\n" + message + "\nContest solving/submission remains manual.")
         summary("### Contest reminder\n" + message.replace("\n", "  \n"))
